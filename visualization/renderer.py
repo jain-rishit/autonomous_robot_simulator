@@ -1,18 +1,15 @@
-"""Pygame presentation layer: draws the state produced by robot/ and
-environment/. Contains zero physics.
+"""The pygame half of the visualization. It only ever *draws* the state
+that robot/ and environment/ produce -- no physics in here, ever.
 
-The world is y-up in metres; the screen is y-down in pixels, so every draw
-goes through to_screen(), which flips y and scales. This separation (sim
-frame vs screen frame) is the same discipline real robotics stacks use.
+One thing to keep straight: the world is y-up in metres, the screen is
+y-down in pixels. Every draw goes through to_screen(), which flips y and
+scales. Keeping sim frame and screen frame separate is a discipline that
+pays off the moment you add a camera or export data.
 """
-
-from __future__ import annotations
 
 import math
 
 import pygame
-
-from environment.world import World
 
 SCALE = 40.0  # pixels per metre -> 24 m x 16 m arena = 960 x 640 px window
 
@@ -31,7 +28,7 @@ _DIM = (150, 158, 170)
 
 
 class Renderer:
-    def __init__(self, world: World, scale: float = SCALE) -> None:
+    def __init__(self, world, scale=SCALE):
         self.world = world
         self.scale = scale
         self.width_px = int(world.width * scale)
@@ -40,31 +37,25 @@ class Renderer:
         self.font_small = self._load_font(13)
 
     @staticmethod
-    def _load_font(size: int):
-        """Monospace font for aligned HUD numbers, with a safe fallback."""
+    def _load_font(size):
+        """Monospace font so HUD numbers line up, with a safe fallback."""
         for name in ("menlo", "monaco", "couriernew"):
             font = pygame.font.SysFont(name, size)
             if font is not None:
                 return font
         return pygame.font.Font(None, size)
 
-    # ------------------------------------------------------------------ #
-    # Coordinate conversion
-    # ------------------------------------------------------------------ #
-    def to_screen(self, x: float, y: float) -> tuple[int, int]:
+    def to_screen(self, x, y):
         """World metres (y-up) -> screen pixels (y-down)."""
         return int(x * self.scale), int(self.height_px - y * self.scale)
 
-    def _rect_px(self, rect) -> pygame.Rect:
+    def _rect_px(self, rect):
         left, top = self.to_screen(rect.min_x, rect.max_y)
         return pygame.Rect(
             left, top, int(rect.w * self.scale), int(rect.h * self.scale)
         )
 
-    # ------------------------------------------------------------------ #
-    # Frame drawing
-    # ------------------------------------------------------------------ #
-    def draw(self, screen, robot, sonar, readings, fps: float) -> None:
+    def draw(self, screen, robot, sonar, readings, fps):
         screen.fill(_BG)
         self._draw_grid(screen)
         self._draw_solids(screen)
@@ -72,7 +63,7 @@ class Renderer:
         self._draw_robot(screen, robot)
         self._draw_hud(screen, robot, sonar, readings, fps)
 
-    def _draw_grid(self, screen) -> None:
+    def _draw_grid(self, screen):
         """1 m grid, so distances are readable at a glance."""
         for gx in range(int(self.world.width) + 1):
             sx, _ = self.to_screen(gx, 0)
@@ -81,13 +72,13 @@ class Renderer:
             _, sy = self.to_screen(0, gy)
             pygame.draw.line(screen, _GRID, (0, sy), (self.width_px, sy), 1)
 
-    def _draw_solids(self, screen) -> None:
+    def _draw_solids(self, screen):
         for rect in self.world.walls:
             pygame.draw.rect(screen, _WALL, self._rect_px(rect))
         for rect in self.world.obstacles:
             pygame.draw.rect(screen, _OBSTACLE, self._rect_px(rect))
 
-    def _draw_sonar(self, screen, sonar) -> None:
+    def _draw_sonar(self, screen, sonar):
         max_range = sonar.sensors[0].max_range
         for sx, sy, angle, dist in sonar.last_rays:
             start = self.to_screen(sx, sy)
@@ -98,12 +89,13 @@ class Renderer:
             if dist < max_range - 1e-6:
                 pygame.draw.circle(screen, _HIT, end, 3)
 
-    def _draw_robot(self, screen, robot) -> None:
+    def _draw_robot(self, screen, robot):
         cx, cy = self.to_screen(robot.x, robot.y)
         r_px = robot.radius * self.scale
 
-        # Wheel axle: a thick line perpendicular to the heading.
-        perp_x, perp_y = -math.sin(robot.theta), -math.cos(robot.theta)
+        # wheel axle: a thick line perpendicular to the heading
+        perp_x = -math.sin(robot.theta)
+        perp_y = -math.cos(robot.theta)
         axle_a = (int(cx + perp_x * r_px * 0.9), int(cy + perp_y * r_px * 0.9))
         axle_b = (int(cx - perp_x * r_px * 0.9), int(cy - perp_y * r_px * 0.9))
         pygame.draw.line(screen, _ROBOT_EDGE, axle_a, axle_b, 6)
@@ -111,7 +103,7 @@ class Renderer:
         pygame.draw.circle(screen, _ROBOT_FILL, (cx, cy), int(r_px))
         pygame.draw.circle(screen, _ROBOT_EDGE, (cx, cy), int(r_px), 2)
 
-        # Heading arrow (screen y is flipped, hence -sin for the tip).
+        # heading arrow (screen y is flipped, hence the -sin)
         tip = (
             int(cx + math.cos(robot.theta) * r_px * 1.6),
             int(cy - math.sin(robot.theta) * r_px * 1.6),
@@ -121,10 +113,7 @@ class Renderer:
         if robot.colliding:
             pygame.draw.circle(screen, _DANGER, (cx, cy), int(r_px) + 5, 2)
 
-    # ------------------------------------------------------------------ #
-    # HUD
-    # ------------------------------------------------------------------ #
-    def _draw_hud(self, screen, robot, sonar, readings, fps: float) -> None:
+    def _draw_hud(self, screen, robot, sonar, readings, fps):
         lines = [
             "POSE   x=%6.2f m  y=%6.2f m  th=%6.1f deg"
             % (robot.x, robot.y, math.degrees(robot.theta)),
@@ -133,23 +122,24 @@ class Renderer:
             "ACC    fwd=%5.2f  lat=%5.2f  yaw=%5.2f   (m/s2, rad/s2)"
             % (robot.ax, robot.ay, robot.alpha),
             "DRIVE  %-12s BUMPS %d   FPS %d"
-            % ("omni" if robot.drive == "omni" else "differential",
-               robot.bumps, int(fps)),
+            % (
+                "omni" if robot.drive == "omni" else "differential",
+                robot.bumps,
+                int(fps),
+            ),
         ]
         y = 10
         for text in lines:
             screen.blit(self.font.render(text, True, _TEXT), (10, y))
             y += 20
 
-        # Sonar panel, right side: label + reading + distance bar.
+        # sonar panel on the right: label + reading + distance bar
         max_range = sonar.sensors[0].max_range
         x0 = self.width_px - 250
         y = 10
         for name, dist in readings.items():
             frac = max(0.0, min(1.0, 1.0 - dist / max_range))  # 1 = touching
-            label = self.font_small.render(
-                f"{name:<11} {dist:4.2f} m", True, _TEXT
-            )
+            label = self.font_small.render(f"{name:<11} {dist:4.2f} m", True, _TEXT)
             screen.blit(label, (x0, y))
             pygame.draw.rect(screen, _GRID, (x0, y + 16, 120, 6))
             colour = (int(255 * frac) + 30, int(200 * (1.0 - frac)) + 40, 70)

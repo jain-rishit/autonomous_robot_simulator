@@ -1,52 +1,39 @@
-"""The virtual mobile robot: state, actuator model, physics update.
+"""The virtual mobile robot: state, actuator model and collision response.
 
-Velocity state is kept in the *body frame*:
-
+Velocities live in the body frame:
     vx    forward speed  (m/s)
-    vy    lateral speed  (m/s)
+    vy    sideways speed (m/s)
     omega turn rate      (rad/s)
 
-One model covers both drive types we simulate:
+Two drive types share one model:
 
-* "diff" -- differential drive (two driven wheels + a caster). The classic
-  nonholonomic mobile robot: it can drive and turn but CANNOT slide
-  sideways, so vy is pinned to 0 no matter what you command. TurtleBots,
-  Roombas and most AGVs behave this way.
-* "omni" -- omni/mecanum wheels, which allow true sideways strafing (vy free).
+- "diff": a classic differential-drive robot (two driven wheels + a
+  caster). It can drive and turn, but it cannot slide sideways, so vy is
+  pinned to 0 no matter what you command. TurtleBots and Roombas work
+  exactly like this.
+- "omni": omni/mecanum wheels, which can genuinely strafe, so vy is free.
 
-Keyboard input only ever sets *velocity targets*; the actuator model ramps
-the actual velocities toward them at limited acceleration. That is what
-makes the robot feel like heavy hardware instead of a teleporting sprite.
+Note that the keyboard never sets velocity directly. It asks for velocity
+targets, and update() walks the real velocity toward them at a limited
+acceleration. That ramp is why the robot feels like it has mass.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-from algorithms.geometry import Collision
 from algorithms.kinematics import body_to_world, integrate_pose, ramp, world_to_body
 
 
-@dataclass
 class Command:
-    """Body-frame velocity targets for one tick (what the driver 'wants')."""
+    """Body-frame velocity targets for one tick -- what the driver wants."""
 
-    vx: float = 0.0
-    vy: float = 0.0
-    omega: float = 0.0
+    def __init__(self, vx=0.0, vy=0.0, omega=0.0):
+        self.vx = vx
+        self.vy = vy
+        self.omega = omega
 
 
 class Robot:
-    """A circular diff/omni-drive mobile robot with collision handling."""
+    """A circular diff/omni-drive robot with sonar and bump handling."""
 
-    def __init__(
-        self,
-        x: float,
-        y: float,
-        theta: float = 0.0,
-        radius: float = 0.5,
-        drive: str = "diff",
-    ) -> None:
+    def __init__(self, x, y, theta=0.0, radius=0.5, drive="diff"):
         if drive not in ("diff", "omni"):
             raise ValueError(f"unknown drive type: {drive!r}")
         if radius <= 0.0:
@@ -57,7 +44,7 @@ class Robot:
         self.y = y
         self.theta = theta
 
-        # Body-frame velocity and acceleration (accel is for the HUD).
+        # body-frame velocity, plus acceleration for the HUD
         self.vx = 0.0
         self.vy = 0.0
         self.omega = 0.0
@@ -68,34 +55,33 @@ class Robot:
         self.radius = radius
         self.drive = drive
 
-        # Actuator limits, tuned to feel like a small indoor robot.
-        self.v_max = 3.0          # m/s, top forward speed
-        self.v_reverse_max = 1.5  # m/s, reverse is slower (like real robots)
-        self.strafe_max = 1.5     # m/s, sideways speed in omni mode
-        self.omega_max = 2.5      # rad/s (~143 deg/s)
-        self.a_max = 4.0          # m/s^2 linear acceleration limit
-        self.alpha_max = 8.0      # rad/s^2 angular acceleration limit
+        # actuator limits, tuned to feel like a small indoor robot
+        self.v_max = 3.0          # top forward speed
+        self.v_reverse_max = 1.5  # reverse is slower, like real robots
+        self.strafe_max = 1.5     # sideways speed, omni mode only
+        self.omega_max = 2.5      # about 143 deg/s
+        self.a_max = 4.0          # linear acceleration limit
+        self.alpha_max = 8.0      # angular acceleration limit
 
-        self.restitution = 0.0    # 0 = dead stop into walls (slides along)
-        self.colliding = False    # True on ticks where a wall contact exists
+        self.restitution = 0.0    # 0 = dead stop into walls, slide along
+        self.colliding = False    # True on ticks with a wall contact
         self.bumps = 0
         self._was_colliding = False
 
-    # ------------------------------------------------------------------ #
-    # Simulation step
-    # ------------------------------------------------------------------ #
-    def update(self, cmd: Command, world, dt: float) -> None:
-        """One fixed-timestep tick: actuate, integrate, resolve collisions."""
+    def update(self, cmd, world, dt):
+        """One tick: actuate, integrate, resolve collisions."""
         if dt <= 0.0:
             raise ValueError(f"dt must be positive, got {dt}")
 
-        prev_vx, prev_vy, prev_omega = self.vx, self.vy, self.omega
+        prev_vx = self.vx
+        prev_vy = self.vy
+        prev_omega = self.omega
 
-        # 1) Actuator model: ramp actual velocity toward the command targets.
+        # 1) actuator model: walk the real velocity toward the targets
         vx_target = max(-self.v_reverse_max, min(self.v_max, cmd.vx))
         omega_target = max(-self.omega_max, min(self.omega_max, cmd.omega))
         if self.drive == "diff":
-            vy_target = 0.0  # nonholonomic constraint: no sideways sliding
+            vy_target = 0.0  # nonholonomic: no sideways sliding allowed
         else:
             vy_target = max(-self.strafe_max, min(self.strafe_max, cmd.vy))
 
@@ -103,13 +89,14 @@ class Robot:
         self.vy = ramp(self.vy, vy_target, self.a_max, dt)
         self.omega = ramp(self.omega, omega_target, self.alpha_max, dt)
 
-        # 2) Integrate the pose (semi-implicit Euler, heading first).
+        # 2) integrate the pose
         self.x, self.y, self.theta = integrate_pose(
             self.x, self.y, self.theta, self.vx, self.vy, self.omega, dt
         )
 
-        # 3) Resolve collisions: push out of any solid, then keep only the
-        #    velocity component parallel to the surface (slide, don't stick).
+        # 3) collisions: push out of whatever we're inside, then keep only
+        #    the velocity component parallel to the surface (slide, don't
+        #    stick). A few passes so corners settle properly.
         contact = False
         for _ in range(4):
             hit = world.collide_circle(self.x, self.y, self.radius)
@@ -124,34 +111,31 @@ class Robot:
             self.bumps += 1
         self._was_colliding = contact
 
-        # 4) Acceleration actually applied this tick (HUD display).
+        # 4) acceleration actually applied this tick, for the HUD
         self.ax = (self.vx - prev_vx) / dt
         self.ay = (self.vy - prev_vy) / dt
         self.alpha = (self.omega - prev_omega) / dt
 
-    def _kill_normal_velocity(self, hit: Collision) -> None:
-        """Remove (or bounce, via restitution) velocity into the surface."""
+    def _kill_normal_velocity(self, hit):
+        """Remove (or bounce off, given restitution) velocity into the wall."""
         vx_w, vy_w = body_to_world(self.vx, self.vy, self.theta)
         vn = vx_w * hit.nx + vy_w * hit.ny
         if vn < 0.0:  # moving INTO the surface
             vx_w -= (1.0 + self.restitution) * vn * hit.nx
             vy_w -= (1.0 + self.restitution) * vn * hit.ny
             self.vx, self.vy = world_to_body(vx_w, vy_w, self.theta)
-        self.omega *= 0.5  # damp spin so we don't grind against corners
+        self.omega *= 0.5  # damp the spin so we don't grind on corners
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
     @property
-    def speed(self) -> float:
+    def speed(self):
         return (self.vx * self.vx + self.vy * self.vy) ** 0.5
 
     @property
-    def pose(self) -> tuple[float, float, float]:
+    def pose(self):
         return self.x, self.y, self.theta
 
-    def reset(self) -> None:
-        """Restore the spawn pose and clear all motion state."""
+    def reset(self):
+        """Back to the spawn pose, motion state cleared."""
         self.x, self.y, self.theta = self.home
         self.vx = self.vy = self.omega = 0.0
         self.ax = self.ay = self.alpha = 0.0

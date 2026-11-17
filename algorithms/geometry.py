@@ -1,74 +1,66 @@
-"""Reusable 2D computational geometry (no pygame, no simulation state).
+"""2D computational geometry, shared by the robot, the sonar and the world.
 
-Conventions
------------
-* Rectangles are axis-aligned (AABB): bottom-left corner (x, y) + w, h.
-* Rays are parametric: p(t) = origin + t * direction, t >= 0. Directions
-  are unit vectors, so t == distance in metres.
+Conventions:
+- rectangles are axis-aligned, stored as bottom-left corner (x, y) + w, h
+- rays are p(t) = origin + t * direction with t >= 0; directions are unit
+  vectors, so t is also the distance in metres
 """
 
-from __future__ import annotations
-
 import math
-from dataclasses import dataclass
 
 _EPS = 1e-9
 
 
-@dataclass(frozen=True)
 class Rect:
-    """Axis-aligned rectangle; (x, y) is the bottom-left corner (y up)."""
+    """An axis-aligned rectangle. (x, y) is the bottom-left corner (y up)."""
 
-    x: float
-    y: float
-    w: float
-    h: float
+    def __init__(self, x, y, w, h):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
 
     @property
-    def min_x(self) -> float:
+    def min_x(self):
         return self.x
 
     @property
-    def max_x(self) -> float:
+    def max_x(self):
         return self.x + self.w
 
     @property
-    def min_y(self) -> float:
+    def min_y(self):
         return self.y
 
     @property
-    def max_y(self) -> float:
+    def max_y(self):
         return self.y + self.h
 
 
-@dataclass(frozen=True)
 class Collision:
-    """Circle-vs-rect overlap result.
+    """The result of a circle-vs-rect overlap test.
 
-    (nx, ny): unit normal pointing from the rectangle surface TOWARD the
-              circle centre (the direction to push the circle to resolve
-              the overlap).
-    depth:    how far the circle currently overlaps, in metres.
+    (nx, ny) is a unit normal pointing from the wall surface back toward
+    the circle centre -- i.e. the direction we push the circle to resolve
+    the overlap. depth is how far it currently overlaps, in metres.
     """
 
-    nx: float
-    ny: float
-    depth: float
-    rect: Rect
+    def __init__(self, nx, ny, depth, rect):
+        self.nx = nx
+        self.ny = ny
+        self.depth = depth
+        self.rect = rect
 
 
-def ray_rect_distance(
-    ox: float, oy: float, dx: float, dy: float, rect: Rect, max_t: float
-) -> float | None:
-    """Distance along a ray to its first intersection with an AABB.
+def ray_rect_distance(ox, oy, dx, dy, rect, max_t):
+    """How far along the ray until it first hits an axis-aligned rect?
 
-    Classic "slab" method: the ray is inside the rectangle exactly when it
-    is simultaneously inside the x-slab [min_x, max_x] and the y-slab
-    [min_y, max_y]. For each axis compute the t-interval spent inside that
-    slab, then intersect the intervals.
+    Uses the classic slab method: a point is inside the rectangle exactly
+    when it's inside the x-slab AND the y-slab. For each axis we work out
+    the interval of t spent inside that slab, then intersect the intervals.
 
-    Returns None when the ray misses or the hit lies beyond max_t.
-    Returns 0.0 when the origin already lies inside the rectangle.
+    Returns None if the ray misses (or the hit is past max_t), and 0.0 if
+    the origin already sits inside the rectangle.
     """
     t_enter = 0.0
     t_exit = max_t
@@ -78,7 +70,7 @@ def ray_rect_distance(
         (oy, dy, rect.min_y, rect.max_y),
     ):
         if abs(d) < _EPS:
-            # Parallel to this axis: inside the slab only if the origin is.
+            # parallel to this axis: inside the slab only if we started there
             if o < lo or o > hi:
                 return None
         else:
@@ -94,14 +86,12 @@ def ray_rect_distance(
     return t_enter
 
 
-def circle_rect_collision(
-    cx: float, cy: float, radius: float, rect: Rect
-) -> Collision | None:
-    """Circle vs axis-aligned rectangle (closest-point test).
+def circle_rect_collision(cx, cy, radius, rect):
+    """Circle vs axis-aligned rectangle, via the closest-point trick.
 
-    The closest point on the rect to the circle centre is the centre
-    clamped into the rectangle. If that point is farther than the radius,
-    there is no overlap.
+    The closest point on the rect to the circle centre is just the centre
+    clamped into the rectangle. If that point is farther away than the
+    radius, we're clear.
     """
     closest_x = min(max(cx, rect.min_x), rect.max_x)
     closest_y = min(max(cy, rect.min_y), rect.max_y)
@@ -116,8 +106,9 @@ def circle_rect_collision(
         dist = math.sqrt(dist_sq)
         return Collision(nx=dx / dist, ny=dy / dist, depth=radius - dist, rect=rect)
 
-    # Degenerate case: the centre is inside (or exactly on the edge of) the
-    # rectangle. Push out through the nearest face.
+    # Corner case (literally): the centre is inside the rect or exactly on
+    # its edge, so there's no meaningful normal. Push out through the
+    # nearest face instead.
     left = cx - rect.min_x
     right = rect.max_x - cx
     bottom = cy - rect.min_y

@@ -4,8 +4,6 @@ Run:            uv run main.py
 Deterministic:  uv run python main.py --frames 600
 """
 
-from __future__ import annotations
-
 import argparse
 
 import pygame
@@ -22,13 +20,13 @@ SPAWN = (12.0, 8.0, 0.0)  # x [m], y [m], heading [rad] -- arena centre
 PLOT_PATH = "run_analysis.png"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--frames",
         type=int,
         default=0,
-        help="run exactly N frames then exit (0 = run until quit); useful "
+        help="run exactly N frames then exit (0 = run until quit); handy "
         "for smoke-testing without a display",
     )
     parser.add_argument(
@@ -37,11 +35,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def keyboard_command(robot: Robot) -> Command:
+def keyboard_command(robot):
     """Map held keys to body-frame velocity targets.
 
     These are TARGETS only -- the actuator model inside Robot.update()
-    ramps the real velocity toward them at limited acceleration.
+    walks the real velocity toward them at limited acceleration.
     """
     keys = pygame.key.get_pressed()
     forward = keys[pygame.K_w] or keys[pygame.K_UP]
@@ -69,7 +67,7 @@ def keyboard_command(robot: Robot) -> Command:
     return cmd
 
 
-def main() -> int:
+def main():
     args = parse_args()
 
     try:
@@ -89,14 +87,14 @@ def main() -> int:
     pygame.display.set_caption("AI Autonomous Robot Simulator -- Week 1")
     clock = pygame.time.Clock()
 
-    history: list[dict] = []
+    history = []
     t_sim = 0.0
     frame = 0
     running = True
 
     try:
         while running:
-            # --- events (edge-triggered actions) ------------------------
+            # -- events (edge-triggered actions) --------------------------
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -112,13 +110,13 @@ def main() -> int:
                         path = save_run_plot(history, world, PLOT_PATH)
                         print(f"analysis plot -> {path}" if path else "nothing recorded yet")
 
-            # --- control + physics (level-triggered, every tick) --------
+            # -- control + physics (level-triggered, every tick) ----------
             robot.update(keyboard_command(robot), world, SIM_DT)
             readings = sonar.read_all(world, robot.pose)
             t_sim += SIM_DT
             frame += 1
 
-            # Record at ~10 Hz for the post-run matplotlib analysis.
+            # record at ~10 Hz for the post-run matplotlib analysis
             if frame % 6 == 0:
                 history.append(
                     {
@@ -130,7 +128,7 @@ def main() -> int:
                     }
                 )
 
-            # --- render --------------------------------------------------
+            # -- render ----------------------------------------------------
             renderer.draw(screen, robot, sonar, readings, clock.get_fps())
             pygame.display.flip()
             clock.tick(SIM_HZ)
