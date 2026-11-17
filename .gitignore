@@ -1,0 +1,17 @@
+# uv-managed virtual environment — never commit it
+.venv/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Simulator output artifacts (regenerated every run)
+run_analysis.png
+
+# macOS noise
+.DS_Store

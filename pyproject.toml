@@ -1,0 +1,20 @@
+[project]
+name = "autonomous-robot-simulator"
+version = "0.1.0"
+description = "AI Autonomous Robot Simulator - Week 1: 2D virtual mobile robot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.5",
+    "pygame>=2.6.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
